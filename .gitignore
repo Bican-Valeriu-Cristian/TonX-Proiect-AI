@@ -1,0 +1,18 @@
+# Folderul de mediu virtual (ESENTIAL)
+tonx_env/
+.venv/
+venv/
+
+# Fisiere de date mari (Nu se pun in Git)
+*.csv
+*.tsv
+*.zip
+
+# Fisiere Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Fisiere de sistem/VS Code
+.vscode/
+.DS_Store

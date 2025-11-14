@@ -5,4 +5,6 @@ def main():
     make_clean_csv()
 
 if __name__ == "__main__":
-    main()
+    print("Incep preprocesarea datelor...")
+    make_clean_csv()
+    print("Gata!")

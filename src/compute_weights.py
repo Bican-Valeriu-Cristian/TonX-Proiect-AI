@@ -21,3 +21,5 @@ def compute_class_weights(train_path="data/train.csv"):
 
 if __name__ == "__main__":
     compute_class_weights()
+
+# --- test---

@@ -12,7 +12,7 @@ def simple_clean(text):
     if not isinstance(text, str):
         text = str(text)
 
-    # facem totul cu litere mici
+    # litere mici
     text = text.lower()
 
     # scoatem link-urile
@@ -58,43 +58,12 @@ def load_kaggle_neutral(path):
     return df_neutral[["label", "text"]]
 
 
-def balance_classes(df, n_per_class=30000, random_state=42):
-    """
-    Alege exact n_per_class exemple pentru fiecare clasa (label).
-    Daca o clasa are mai putine exemple decat n_per_class,
-    se face oversampling (sample cu replace=True) ca sa ajungem la n_per_class.
-    """
-    dfs = []
-    for label, group in df.groupby("label"):
-        if len(group) < n_per_class:
-            print(f"Avertisment: label {label} are doar {len(group)} exemple. "
-                  f"Fac oversampling pana la {n_per_class}.")
-            sampled = group.sample(
-                n=n_per_class,
-                replace=True,          # permite alegerea cu inlocuire
-                random_state=random_state
-            )
-        else:
-            sampled = group.sample(
-                n=n_per_class,
-                random_state=random_state
-            )
-
-        dfs.append(sampled)
-
-    df_balanced = pd.concat(dfs, ignore_index=True)
-
-    # amestecam dupa balansare
-    df_balanced = df_balanced.sample(frac=1, random_state=random_state).reset_index(drop=True)
-    return df_balanced
-
-
 def make_clean_csv():
     # cai catre fisiere
     sentiment140_path = "data/noemoticon.csv"
     kaggle_path = "data/twitter_training.csv"
 
-    out_all = "data/trainingdata.csv"   # tot setul balansat (90k)
+    out_all = "data/trainingdata.csv"   # tot setul combinat, nebalansat
     out_train = "data/train.csv"
     out_val = "data/validation.csv"
     out_test = "data/test.csv"
@@ -125,17 +94,14 @@ def make_clean_csv():
     # ================== Combinam ==================
     df_all = pd.concat([df_s140, df_neutral], ignore_index=True)
 
-    # ================== Balansam: 30k / clasa ==================
-    # Presupunem clasele: 0 (negativ), 1 (pozitiv), 2 (neutru)
-    df_all = balance_classes(df_all, n_per_class=30000, random_state=42)
-    # acum df_all are 90.000 randuri: 30k negativ, 30k pozitiv, 30k neutru
+    # amestecam randurile inainte de split
+    df_all = df_all.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    # salvam tot dataset-ul combinat si balansat
+    # salvam tot dataset-ul combinat
     df_all.to_csv(out_all, index=False)
-    print("Am salvat toate datele balansate (90k) in:", out_all)
+    print("Am salvat toate datele in:", out_all)
 
     # ================== Split 70 / 15 / 15 ==================
-    # df_all este deja amestecat in balance_classes()
     n = len(df_all)
     n_train = int(0.70 * n)
     n_val = int(0.15 * n)

@@ -3,7 +3,6 @@ from transformers import DistilBertTokenizerFast
 from datasets import load_dataset, Value, DatasetDict
 
 # --- Configurație ---
-# Asigură-te că aceste căi sunt corecte
 TRAIN_PATH = os.path.join("data", "train.csv")
 VAL_PATH = os.path.join("data", "validation.csv")
 TEST_PATH = os.path.join("data", "test.csv")
@@ -55,7 +54,7 @@ def tokenize_data():
         return None
 
     # 3. FILTRARE: Elimină rândurile cu valori invalide (None/NaN) din coloana 'text'
-    # Aceste valori invalide sunt cauza erorii 'TypeError' în multiprocessing.
+
     print("Filtrez rândurile cu valori nule sau non-string în coloana 'text'...")
     def filter_invalid_text(example):
         # Verifică dacă valoarea este string ȘI nu este doar spațiu gol
@@ -65,7 +64,7 @@ def tokenize_data():
     raw_datasets = raw_datasets.filter(
         filter_invalid_text, 
         num_proc=os.cpu_count(),
-        # Nu este nevoie să scoți coloane încă, dar este bine să știi câte s-au șters
+       
     )
     
     print(f"După filtrare: Train size = {len(raw_datasets['train'])}")

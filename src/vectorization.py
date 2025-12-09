@@ -6,7 +6,7 @@ from datasets import load_dataset, Value
 # DistilBERT este folosit pentru tokenizare.
 MODEL_NAME = "distilbert-base-uncased"
 # Lungimea maximă a secvenței de token-uri. Textele mai lungi vor fi trunchiate, cele mai scurte umplute (padding).
-MAX_LENGTH = 512 
+MAX_LENGTH = 128 
 # Directorul de ieșire unde vor fi salvate seturile de date tokenizate.
 TOKENIZED_OUTPUT_DIR = os.path.join("data", "tokenized_datasets")
 

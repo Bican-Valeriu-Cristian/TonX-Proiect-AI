@@ -18,7 +18,7 @@ def tokenize_function(examples, tokenizer, text_column):
         # Trunchiază textul dacă depășește MAX_LENGTH.
         truncation=True,
         # Adaugă padding (umplere) pentru a asigura aceeași lungime.
-        padding=True,
+        padding="max_length",
         max_length=MAX_LENGTH
     )
 

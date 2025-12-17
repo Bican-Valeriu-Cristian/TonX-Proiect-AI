@@ -2,9 +2,6 @@ import os
 import argparse
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
@@ -35,15 +32,17 @@ def run_testing(task):
     
     test_data = dataset_dict['test']
     
-    # Calculăm numărul de clase ÎNAINTE de conversia PyTorch ---
+    # Calculăm numărul de clase ÎNAINTE de a seta formatul PyTorch ---
     print(" INFO: Analiză clase...")
+    # Extragem etichetele ca o listă simplă sau array numpy
     all_labels = np.array(test_data['label']) 
     unique_classes = np.unique(all_labels)
     num_classes = len(unique_classes)
+    
     print(f" INFO: S-au detectat {num_classes} clase în setul de test.")
-    # -------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------
 
-    # 2. Setare format PyTorch
+    # 2. Setare format PyTorch (Acum putem converti datele în tensori)
     test_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
     test_loader = DataLoader(test_data, batch_size=BATCH_SIZE)
 
@@ -59,7 +58,7 @@ def run_testing(task):
     print(f" INFO: Încărcare model din {model_path}...")
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.to(DEVICE)
-    model.eval()
+    model.eval() # IMPORTANT: Modul de evaluare
 
     # 4. Bucla de Predicție
     print(" INFO: Generare predicții...")
@@ -79,12 +78,13 @@ def run_testing(task):
             predictions.extend(preds.cpu().numpy())
             true_labels.extend(labels.cpu().numpy())
 
-    # 5. Raportare Rezultate
+    # 5. Calcul Metrici
     acc = accuracy_score(true_labels, predictions)
     print(f"\nREZULTATE FINALE PENTRU {task.upper()}:")
     print(f"Acuratețe (Accuracy): {acc:.4f}")
     print("-" * 30)
     
+    # Numele claselor pentru raport (opțional)
     if task == 'sentiment':
         target_names = ['Negativ', 'Pozitiv'] if num_classes == 2 else None
     else:
@@ -92,23 +92,9 @@ def run_testing(task):
 
     print(classification_report(true_labels, predictions, target_names=target_names, digits=4))
     
-    # 6. Generare Grafic Seaborn (Matricea de Confuzie)
     print("-" * 30)
-    print("Generare grafic Matrice de Confuzie...")
-    
-    cm = confusion_matrix(true_labels, predictions)
-    
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False)
-    plt.xlabel('Predicție')
-    plt.ylabel('Realitate (Adevăr)')
-    plt.title(f'Matrice de Confuzie - {task.capitalize()}')
-    
-    # Salvăm imaginea în folderul curent
-    img_name = f"confusion_matrix_{task}.png"
-    plt.savefig(img_name)
-    print(f" >> Graficul a fost salvat ca imagine: {img_name}")
-    print("-" * 30)
+    print("Matrice de Confuzie (Rânduri=Real, Coloane=Predis):")
+    print(confusion_matrix(true_labels, predictions))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

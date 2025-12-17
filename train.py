@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-# --- FIX: Importăm AdamW din PyTorch, nu din transformers ---
+#  Importăm AdamW din PyTorch, nu din transformers ---
 from torch.optim import AdamW 
 from transformers import get_linear_schedule_with_warmup
 
@@ -101,7 +101,7 @@ def run_training(task):
     train_data = dataset_dict['train']
     val_data = dataset_dict['validation']
 
-    # --- PAS CRITIC: Calculăm clasele și ponderile ÎNAINTE de conversia la PyTorch ---
+    #  Calculăm clasele și ponderile ÎNAINTE de conversia la PyTorch ---
     # Convertim coloana 'label' într-un numpy array simplu
     print(" INFO: Analiză distribuție clase...")
     all_labels = np.array(train_data['label']) 

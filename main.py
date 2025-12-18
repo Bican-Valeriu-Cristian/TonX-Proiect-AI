@@ -1,58 +1,66 @@
-from src.preprocessing import make_clean_csv
-import pandas as pd
+import os 
+from src.preprocessing_category import prepare_local_splits
+from src.preprocessing_sentiment import make_clean_csv
+from src.vectorization import run_tokenization_for_task 
+from src.vectorization import TOKENIZED_OUTPUT_DIR 
 
-def count_labels(file_path):
-    """
-    Citește un fișier CSV și numără aparițiile etichetelor 0, 1 și 2.
-    """
+    # 1. Ne asiguram ca directorul 'data/' exista
+    data_dir = "data"
+    # Verifică dacă directorul 'data/' există
+    if not os.path.exists(data_dir):
+        # Dacă nu există, îl creează
+        os.makedirs(data_dir)
+        print(f"Directorul '{data_dir}/' a fost creat.")
+
+    # Ne asiguram ca exista si directorul pentru datele tokenizate
+    # Verifică dacă directorul de output pentru tokenizare există
+    if not os.path.exists(TOKENIZED_OUTPUT_DIR):
+        # Dacă nu există, îl creează (exist_ok=True previne eroarea dacă există deja)
+        os.makedirs(TOKENIZED_OUTPUT_DIR, exist_ok=True)
+        print(f"Directorul pentru output tokenizat '{TOKENIZED_OUTPUT_DIR}/' a fost creat.")
+
+    # --- Rulare preprocesare Categorie ---
+    print("\n==============================================")
+    print("INCEPERE PREPROCESARE: Categorie (Jason23322)")
+    print("==============================================")
     try:
-        df = pd.read_csv(file_path)
-        if 'label' not in df.columns:
-            return {"Eroare": "Fișierul nu conține coloana 'label'."}
-
-        label_counts = df['label'].value_counts().to_dict()
-        final_counts = {
-            0: label_counts.get(0, 0),  # Negativ
-            1: label_counts.get(1, 0),  # Pozitiv
-            2: label_counts.get(2, 0)   # Neutru
-        }
-        return final_counts
-    except FileNotFoundError:
-        return {"Eroare": f"Fișierul nu a fost găsit la calea specificată: {file_path}"}
-    except Exception as e:
-        return {"Eroare": f"A apărut o eroare la citirea fișierului: {e}"}
-
-def display_counts(dataset_name, results):
-    """
-    Funcție ajutătoare pentru afișarea rezultatelor.
-    """
-    if "Eroare" in results:
-        print(f"Eroare la {dataset_name}: {results['Eroare']}")
-    else:
-        print(f"\nDistribuția Etichetelor în {dataset_name}:")
-        print(f"  Sentiment Negativ (0): {results[0]}")
-        print(f"  Sentiment Pozitiv (1): {results[1]}")
-        print(f"  Sentiment Neutru (2): {results[2]}")
-        total = results[0] + results[1] + results[2]
-        print(f"  Total Rânduri: {total}")
+        # Etapa 1: Preprocesarea datelor Categorie (curățare, împărțire în seturi)
+        prepare_local_splits()
+        print("Preprocesare Categorie finalizata cu succes.")
         
+        # === NOU: Rulare Tokenizare Categorie ===
+        print("\n---  INCEPERE TOKENIZARE: Categorie ---")
+        # Etapa 2: Tokenizarea datelor Categorie (conversia text -> ID-uri numerice)
+        run_tokenization_for_task(task="category")
+        print(" Tokenizare Categorie finalizata.")
+        
+    except Exception as e:
+        # Afișează orice eroare apărută în pipeline-ul Categorie
+        print(f" Eroare la preprocesarea/tokenizarea Categoriei: {e}")
 
-def main():
-    # print("Curățăm datele și facem split în train / test...")
-    # make_clean_csv()
+    # --- Rulare preprocesare Sentiment ---
+    print("\n===============================================")
+    print("INCEPERE PREPROCESARE: Sentiment (S140 + Kaggle)")
+    print("===============================================")
+    try:
+        # Etapa 1: Preprocesarea datelor Sentiment (unificare, curățare)
+        make_clean_csv()
+        print("Preprocesare Sentiment finalizata cu succes.")
+        
+        # === Rulare Tokenizare Sentiment ===
+        print("\n---  INCEPERE TOKENIZARE: Sentiment ---")
+        # Etapa 2: Tokenizarea datelor Sentiment
+        run_tokenization_for_task(task="sentiment")
+        print(" Tokenizare Sentiment finalizata.")
+        
+    except Exception as e:
+        # Afișează orice eroare apărută în pipeline-ul Sentiment
+        print(f" Eroare la preprocesarea/tokenizarea Sentimentului: {e}")
 
-    # 1. Numărăm setul de antrenament
-    results_train = count_labels("data/train.csv")
-    display_counts("Setul de Antrenament (train.csv)", results_train)
-    
-    # 2. Numărăm setul de test
-    results_test = count_labels("data/test.csv")
-    display_counts("Setul de Test (test.csv)", results_test)
-    
-    # 3. Numărăm setul de validare
-    results_val = count_labels("data/validation.csv")
-    display_counts("Setul de Validare (validation.csv)", results_val)
+    print("\n\n===  TOATE PREGĂTIRILE SUNT FINALIZATE!  ===")
 
 
 if __name__ == "__main__":
+
     main()
+

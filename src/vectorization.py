@@ -67,7 +67,7 @@ def run_tokenization_for_task(task: str):
         return None
         
     # Asigură-te că coloana de text este tratată ca șir de caractere (string)
-    features[text_col] = Value('string') 
+    features[text_col] = Value('string')
     raw_datasets = raw_datasets.cast(features)
 
     # 3. Filtrare Text Invalid
@@ -105,6 +105,32 @@ def run_tokenization_for_task(task: str):
 
     print(f"---  Tokenizare {task.upper()} FINALIZATĂ ---")
     return tokenized_datasets
+
+
+def demonstrate_tokenization(text: str):
+    """
+    Funcție utilitară pentru prezentare care arată procesul de tokenizare pas cu pas.
+    """
+    # Folosim numele modelului definit global în acest fisier
+    tokenizer = DistilBertTokenizerFast.from_pretrained(MODEL_NAME)
+    
+    print(f"\n--- DEMONSTRAȚIE TOKENIZARE ---")
+    print(f"1. Text Original: '{text}'")
+    
+    # Pasul 1: Împărțirea în tokeni (sub-cuvinte)
+    tokens = tokenizer.tokenize(text)
+    print(f"2. Tokeni (Sub-words): {tokens}")
+    
+    # Pasul 2: Conversia în ID-uri numerice
+    ids = tokenizer.convert_tokens_to_ids(tokens)
+    print(f"3. ID-uri corespunzătoare: {ids}")
+    
+    # Pasul 3: Adăugarea de tokeni speciali ([CLS], [SEP]) și padding
+    encoding = tokenizer(text, truncation=True, padding="max_length", max_length=15) # Folosim max_length mic pentru vizibilitate
+    print(f"4. Format final (cu [CLS], [SEP] și Padding):")
+    print(f"   - Input IDs: {encoding['input_ids']}")
+    print(f"   - Attention Mask: {encoding['attention_mask']}")
+    print("--------------------------------\n")
 
 
 if __name__ == '__main__':

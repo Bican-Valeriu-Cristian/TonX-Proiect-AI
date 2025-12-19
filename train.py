@@ -59,6 +59,11 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_exa
 
         # 3. Backward pass (Învățare)
         loss.backward()
+        
+        # Print progres la fiecare 20 batch-uri
+        if len(losses) % 20 == 0:
+            print(f"  > Batch {len(losses)}: Loss curent = {loss.item():.4f}")
+            
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Evită explozia gradienților
         optimizer.step()
         scheduler.step()
@@ -87,8 +92,12 @@ def eval_model(model, data_loader, loss_fn, device, n_examples):
     return correct_predictions.double() / n_examples, np.mean(losses)
 
 def run_training(task):
-    print(f"\n=======================================================")
-    print(f" PORNIRE ANTRENARE | TASK: {task.upper()}")
+    print(f"=======================================================")
+    print(f" DISPOZITIV UTILIZAT: {DEVICE}")
+    if torch.cuda.is_available():
+        print(f" GPU DETECTAT: {torch.cuda.get_device_name(0)}")
+    else:
+        print(" GPU: Nu a fost detectat (se rulează pe CPU)")
     print(f"=======================================================")
     
     # 1. Încărcare date

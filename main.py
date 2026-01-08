@@ -4,6 +4,8 @@ from src.preprocessing_sentiment import make_clean_csv
 from src.vectorization import run_tokenization_for_task 
 from src.vectorization import TOKENIZED_OUTPUT_DIR 
 
+def main():
+  
     # 1. Ne asiguram ca directorul 'data/' exista
     data_dir = "data"
     # Verifică dacă directorul 'data/' există

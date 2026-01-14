@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-#  Importăm AdamW din PyTorch, nu din transformers ---
+# Importăm AdamW din PyTorch
 from torch.optim import AdamW 
 from transformers import get_linear_schedule_with_warmup
 
@@ -19,12 +19,24 @@ from src.model import TaskClassifier
 BATCH_SIZE = 16
 EPOCHS = 3
 LEARNING_RATE = 2e-5
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ==============================================================================
+# 1. MODIFICARE MAJORĂ: FORȚARE GPU
+# ==============================================================================
+# Verificăm strict dacă există GPU. Dacă nu, oprim scriptul.
+if not torch.cuda.is_available():
+    raise SystemError("❌ EROARE CRITICĂ: Nu am detectat placă video NVIDIA (CUDA)! "
+                      "Scriptul se oprește pentru a nu rula pe CPU.")
+
+DEVICE = torch.device("cuda")
+print(f"✅ GPU Detectat: {torch.cuda.get_device_name(0)}")
+print(f"✅ Memorie VRAM disponibilă: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+# ==============================================================================
 
 def get_sklearn_class_weights(labels):
     """
     Calculează ponderile folosind Scikit-Learn.
-    Primește direct un array numpy de etichete.
+    Returnează tensorul direct pe GPU.
     """
     classes = np.unique(labels)
     
@@ -34,7 +46,7 @@ def get_sklearn_class_weights(labels):
     print(f"   Clase detectate: {classes}")
     print(f"   Ponderi calculate (sklearn): {weights}")
     
-    # Returnăm un Tensor PyTorch (float) trimis pe GPU/CPU
+    # Trimitem ponderile direct pe DEVICE (GPU)
     return torch.tensor(weights, dtype=torch.float).to(DEVICE)
 
 def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_examples):
@@ -43,6 +55,7 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_exa
     correct_predictions = 0
 
     for batch in data_loader:
+        # Mutăm datele pe GPU
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['label'].to(device)
@@ -59,7 +72,7 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_exa
 
         # 3. Backward pass (Învățare)
         loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Evită explozia gradienților
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
@@ -67,12 +80,13 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_exa
     return correct_predictions.double() / n_examples, np.mean(losses)
 
 def eval_model(model, data_loader, loss_fn, device, n_examples):
-    model = model.eval() # Dezactivează Dropout
+    model = model.eval()
     losses = []
     correct_predictions = 0
 
-    with torch.no_grad(): # Nu calculăm gradienți (economie memorie/timp)
+    with torch.no_grad():
         for batch in data_loader:
+            # Mutăm datele pe GPU
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['label'].to(device)
@@ -88,7 +102,7 @@ def eval_model(model, data_loader, loss_fn, device, n_examples):
 
 def run_training(task):
     print(f"\n=======================================================")
-    print(f" PORNIRE ANTRENARE | TASK: {task.upper()}")
+    print(f" PORNIRE ANTRENARE PE GPU | TASK: {task.upper()}")
     print(f"=======================================================")
     
     # 1. Încărcare date
@@ -101,26 +115,28 @@ def run_training(task):
     train_data = dataset_dict['train']
     val_data = dataset_dict['validation']
 
-    #  Calculăm clasele și ponderile ÎNAINTE de conversia la PyTorch ---
-    # Convertim coloana 'label' într-un numpy array simplu
+    # Analiză clase
     print(" INFO: Analiză distribuție clase...")
     all_labels = np.array(train_data['label']) 
     num_classes = len(set(all_labels))
     print(f" INFO: S-au detectat {num_classes} clase unice.")
 
-    # Calcul Ponderi
+    # Calcul Ponderi (pe GPU)
     class_weights = get_sklearn_class_weights(all_labels)
-    # -------------------------------------------------------------------------------
 
-    # 2. Setare format PyTorch (abia acum transformăm datele în Tensors)
+    # 2. Setare format PyTorch
     train_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
     val_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
 
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE)
+    # --- MODIFICARE 2: Optimizare DataLoader pentru GPU ---
+    # pin_memory=True ajută la transferul mai rapid RAM -> VRAM
+    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, pin_memory=True)
 
     # 3. Configurare Model
     model = TaskClassifier(num_classes=num_classes)
+    
+    # Mutăm modelul pe GPU
     model = model.to(DEVICE)
 
     loss_fn = nn.CrossEntropyLoss(weight=class_weights)

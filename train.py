@@ -21,6 +21,45 @@ BATCH_SIZE = 16
 EPOCHS = 3
 LEARNING_RATE = 2e-5
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+CHECKPOINT_DIR = "checkpoints"  # Folder pentru checkpoint-uri
+
+def save_checkpoint(epoch, model, optimizer, scheduler, metrics, task, best_accuracy):
+    """Salvează un checkpoint complet pentru a continua antrenarea"""
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{task}_checkpoint_epoch_{epoch}.pt")
+    
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'best_accuracy': best_accuracy,
+        'train_history': metrics['train_history'],
+        'val_history': metrics['val_history']
+    }
+    
+    torch.save(checkpoint, checkpoint_path)
+    print(f"💾 Checkpoint salvat: {checkpoint_path}")
+    
+    # Salvăm și un checkpoint "latest" pentru ușurință
+    latest_path = os.path.join(CHECKPOINT_DIR, f"{task}_latest.pt")
+    torch.save(checkpoint, latest_path)
+    
+    return checkpoint_path
+
+def load_checkpoint(task):
+    """Încarcă ultimul checkpoint dacă există"""
+    latest_path = os.path.join(CHECKPOINT_DIR, f"{task}_latest.pt")
+    
+    if os.path.exists(latest_path):
+        print(f"📂 Checkpoint găsit: {latest_path}")
+        response = input("Dorești să continui antrenarea de la checkpoint? (y/n): ")
+        if response.lower() == 'y':
+            checkpoint = torch.load(latest_path, map_location=DEVICE)
+            print(f"✅ Checkpoint încărcat de la epoca {checkpoint['epoch']}")
+            return checkpoint
+    
+    return None
 
 def get_sklearn_class_weights(labels):
     """
@@ -134,10 +173,21 @@ def run_training(task):
     val_history = {'loss': [], 'accuracy': []}
     # 5. Bucla de antrenare
     best_accuracy = 0
+    start_epoch = 0
+    checkpoint = load_checkpoint(task)
+    if checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_accuracy = checkpoint['best_accuracy']
+        train_history = checkpoint['train_history']
+        val_history = checkpoint['val_history']
+        print(f"🔄 Continuăm de la epoca {start_epoch}/{EPOCHS}")
     save_path = os.path.join("models", f"{task}_best_model.bin")
     os.makedirs("models", exist_ok=True)
 
-    for epoch in range(EPOCHS):
+    for epoch in range(start_epoch,EPOCHS):
         print(f"\nEpoch {epoch + 1}/{EPOCHS}")
         print('-' * 20)
 
@@ -161,6 +211,12 @@ def run_training(task):
             torch.save(model.state_dict(), save_path)
             best_accuracy = val_acc
             print(f" >> Model Nou Salvat! ({save_path})")
+            
+            metrics_for_checkpoint = {
+            'train_history': train_history,
+            'val_history': val_history
+        }
+        save_checkpoint(epoch, model, optimizer, scheduler, metrics_for_checkpoint, task, best_accuracy)
     # 6. Salvare metrici finale
     print("\n📊 Salvare metrici de antrenare...") 
     class_names = ['Negativ', 'Pozitiv', 'Neutru'] if task == 'sentiment' else [f'Categorie_{i}' for i in range(num_classes)]

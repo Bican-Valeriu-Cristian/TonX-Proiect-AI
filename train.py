@@ -206,16 +206,16 @@ def run_training(task):
         # Salvăm istoricul
         val_history['loss'].append(float(val_loss))
         val_history['accuracy'].append(float(val_acc))
-
+        metrics_for_checkpoint = {
+            'train_history': train_history,
+            'val_history': val_history
+        }
         if val_acc > best_accuracy:
             torch.save(model.state_dict(), save_path)
             best_accuracy = val_acc
             print(f" >> Model Nou Salvat! ({save_path})")
             
-            metrics_for_checkpoint = {
-            'train_history': train_history,
-            'val_history': val_history
-        }
+           
         save_checkpoint(epoch, model, optimizer, scheduler, metrics_for_checkpoint, task, best_accuracy)
     # 6. Salvare metrici finale
     print("\n📊 Salvare metrici de antrenare...") 

@@ -15,11 +15,32 @@ from sklearn.utils.class_weight import compute_class_weight
 # Importăm modelul definit în src/model.py
 from src.model import TaskClassifier 
 
+###
+from tqdm import tqdm
+
 # --- CONFIGURĂRI ---
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 EPOCHS = 3
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 1e-5
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+### 
+def get_optimal_num_workers():
+    try:
+        # Numărul REAL de CPU-uri disponibile 
+        available_cpus = len(os.sched_getaffinity(0))
+    except AttributeError:
+        # fallback dacă sistemul nu suportă sched_getaffinity
+        available_cpus = os.cpu_count()
+
+    # Regula optimă pentru CPU-only:
+    # - dacă ai 1 CPU → 0 workers
+    # - altfel → nr workers = nr de CPU - 1
+    if available_cpus <= 1:
+        return 0
+    return max(1, available_cpus - 1)
+
 
 def get_sklearn_class_weights(labels):
     """
@@ -42,7 +63,16 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_exa
     losses = []
     correct_predictions = 0
 
-    for batch in data_loader:
+    ### 
+    progress_bar = tqdm(
+        data_loader,
+        desc="Training",
+        total=len(data_loader),
+        leave=False
+    )
+
+    ### 
+    for batch in progress_bar:
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['label'].to(device)
@@ -64,6 +94,13 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_exa
         scheduler.step()
         optimizer.zero_grad()
 
+        ###
+        # live updates in progress bar
+        progress_bar.set_postfix(
+            loss=f"{loss.item():.4f}",
+            acc=f"{(correct_predictions.double() / n_examples):.4f}"
+        )
+
     return correct_predictions.double() / n_examples, np.mean(losses)
 
 def eval_model(model, data_loader, loss_fn, device, n_examples):
@@ -71,8 +108,17 @@ def eval_model(model, data_loader, loss_fn, device, n_examples):
     losses = []
     correct_predictions = 0
 
-    with torch.no_grad(): # Nu calculăm gradienți (economie memorie/timp)
-        for batch in data_loader:
+    ### 
+    progress_bar = tqdm(
+        data_loader,
+        desc="Validation",
+        total=len(data_loader),
+        leave=False
+    )
+
+    with torch.no_grad():  # Nu calculăm gradienți (economie memorie/timp)
+        ### 
+        for batch in progress_bar:
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['label'].to(device)
@@ -83,6 +129,13 @@ def eval_model(model, data_loader, loss_fn, device, n_examples):
 
             correct_predictions += torch.sum(preds == labels)
             losses.append(loss.item())
+
+            ### 
+            # update progress bar
+            progress_bar.set_postfix(
+                loss=f"{loss.item():.4f}",
+                acc=f"{(correct_predictions.double() / n_examples):.4f}"
+            )
 
     return correct_predictions.double() / n_examples, np.mean(losses)
 
@@ -116,8 +169,27 @@ def run_training(task):
     train_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
     val_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
 
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE)
+    train_loader = DataLoader(
+        train_data,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+
+        ### 
+        num_workers=get_optimal_num_workers(),
+        persistent_workers=False,
+        pin_memory=False
+    )
+
+    val_loader = DataLoader(
+        val_data,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+
+        ###
+        num_workers=get_optimal_num_workers(),
+        persistent_workers=False,
+        pin_memory=False
+    )
 
     # 3. Configurare Model
     model = TaskClassifier(num_classes=num_classes)

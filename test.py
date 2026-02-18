@@ -4,10 +4,19 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score
+)
+
 
 # Importăm arhitectura modelului
 from src.model import TaskClassifier
+from src.metrics_logger import MetricsLogger
 
 # --- CONFIGURĂRI ---
 BATCH_SIZE = 16
@@ -80,21 +89,103 @@ def run_testing(task):
 
     # 5. Calcul Metrici
     acc = accuracy_score(true_labels, predictions)
+    f1_macro = f1_score(true_labels, predictions, average='macro', zero_division=0)
+    precision_macro = precision_score(true_labels, predictions, average='macro', zero_division=0)
+    recall_macro = recall_score(true_labels, predictions, average='macro', zero_division=0)
+    
+    print(f"\n{'='*50}")
     print(f"\nREZULTATE FINALE PENTRU {task.upper()}:")
     print(f"Acuratețe (Accuracy): {acc:.4f}")
     print("-" * 30)
+    print(f"F1-Score (Macro):     {f1_macro:.4f}")
+    print(f"Precision (Macro):    {precision_macro:.4f}")
+    print(f"Recall (Macro):       {recall_macro:.4f}")
+    print("-" * 50)
     
-    # Numele claselor pentru raport (opțional)
+    # 6. Metrici per Clasă
+    # Numele claselor
     if task == 'sentiment':
-        target_names = ['Negativ', 'Pozitiv'] if num_classes == 2 else None
+        if num_classes == 2:
+            target_names = ['Negativ', 'Pozitiv']
+        elif num_classes == 3:
+            target_names = ['Negativ', 'Pozitiv', 'Neutru']
+        else:
+            target_names = [f'Clasa_{i}' for i in range(num_classes)]
     else:
-        target_names = None
+        target_names = [f'Categorie_{i}' for i in range(num_classes)]
 
-    print(classification_report(true_labels, predictions, target_names=target_names, digits=4))
+    # Classification Report (conține precision, recall, f1 per clasă)
+    report = classification_report(
+        true_labels, 
+        predictions, 
+        target_names=target_names, 
+        digits=4,
+        output_dict=True  # Returnează dict pentru a salva în JSON
+    )
     
-    print("-" * 30)
+    print("\nRAPORT DETALIAT PER CLASĂ:")
+    print(classification_report(
+        true_labels, 
+        predictions, 
+        target_names=target_names, 
+        digits=4
+    ))
+    
+    # 7. Matrice de Confuzie
+    conf_matrix = confusion_matrix(true_labels, predictions)
+    print("-" * 50)
     print("Matrice de Confuzie (Rânduri=Real, Coloane=Predis):")
-    print(confusion_matrix(true_labels, predictions))
+    print(conf_matrix)
+    print("-" * 50)
+
+    # 8. Pregătire date pentru salvare
+    # Extragem metricile per clasă din report
+    class_metrics = {}
+    for class_name in target_names:
+        if class_name in report:
+            class_metrics[class_name] = {
+                'precision': report[class_name]['precision'],
+                'recall': report[class_name]['recall'],
+                'f1-score': report[class_name]['f1-score'],
+                'support': int(report[class_name]['support'])
+            }
+    
+    # 9. Încărcăm metricile existente din train.py
+    logger = MetricsLogger()
+    existing_metrics = logger.load_metrics(task)
+    run_id = None
+    if existing_metrics and "run_id" in existing_metrics:
+      run_id = existing_metrics["run_id"]
+
+    if existing_metrics is None:
+        print("⚠ ATENȚIE: Nu există metrici de antrenare. Se vor salva doar metricile de test.")
+        existing_metrics = {}
+    
+    # 10. Adăugăm metricile de test la cele existente
+    existing_metrics['test_results'] = {
+        'accuracy': float(acc),
+        'f1_score_macro': float(f1_macro),
+        'precision_macro': float(precision_macro),
+        'recall_macro': float(recall_macro),
+        'confusion_matrix': conf_matrix.tolist(),  # Convertim la listă pentru JSON
+        'num_test_samples': len(true_labels)
+    }
+    
+    existing_metrics['class_metrics'] = class_metrics
+    
+    # Actualizăm și numele claselor în config (dacă există)
+    if 'config' not in existing_metrics:
+        existing_metrics['config'] = {}
+    existing_metrics['config']['class_names'] = target_names
+    
+    # 11. Salvăm metricile actualizate
+    print(f"\n📊 Salvare metrici complete (train + test)...")
+    logger.save_metrics(task, existing_metrics, run_id=run_id)
+    
+    print(f"\n{'='*50}")
+    print("✅ TESTARE FINALIZATĂ CU SUCCES!")
+    print(f"📈 Toate metricile au fost salvate în 'metrics/{task}_metrics.json'")
+    print(f"{'='*50}\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

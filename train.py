@@ -14,12 +14,52 @@ from sklearn.utils.class_weight import compute_class_weight
 
 # Importăm modelul definit în src/model.py
 from src.model import TaskClassifier 
+from src.metrics_logger import MetricsLogger
 
 # --- CONFIGURĂRI ---
 BATCH_SIZE = 16
 EPOCHS = 3
 LEARNING_RATE = 2e-5
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+CHECKPOINT_DIR = "checkpoints"  # Folder pentru checkpoint-uri
+
+def save_checkpoint(epoch, model, optimizer, scheduler, metrics, task, best_accuracy):
+    """Salvează un checkpoint complet pentru a continua antrenarea"""
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{task}_checkpoint_epoch_{epoch}.pt")
+    
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'best_accuracy': best_accuracy,
+        'train_history': metrics['train_history'],
+        'val_history': metrics['val_history']
+    }
+    
+    torch.save(checkpoint, checkpoint_path)
+    print(f"💾 Checkpoint salvat: {checkpoint_path}")
+    
+    # Salvăm și un checkpoint "latest" pentru ușurință
+    latest_path = os.path.join(CHECKPOINT_DIR, f"{task}_latest.pt")
+    torch.save(checkpoint, latest_path)
+    
+    return checkpoint_path
+
+def load_checkpoint(task):
+    """Încarcă ultimul checkpoint dacă există"""
+    latest_path = os.path.join(CHECKPOINT_DIR, f"{task}_latest.pt")
+    
+    if os.path.exists(latest_path):
+        print(f"📂 Checkpoint găsit: {latest_path}")
+        response = input("Dorești să continui antrenarea de la checkpoint? (y/n): ")
+        if response.lower() == 'y':
+            checkpoint = torch.load(latest_path, map_location=DEVICE)
+            print(f"✅ Checkpoint încărcat de la epoca {checkpoint['epoch']}")
+            return checkpoint
+    
+    return None
 
 def get_sklearn_class_weights(labels):
     """
@@ -128,13 +168,26 @@ def run_training(task):
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
     total_steps = len(train_loader) * EPOCHS
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
-
-    # 4. Bucla de antrenare
+    # 4. Inițializare istoric pentru metrici
+    train_history = {'loss': [], 'accuracy': []}
+    val_history = {'loss': [], 'accuracy': []}
+    # 5. Bucla de antrenare
     best_accuracy = 0
+    start_epoch = 0
+    checkpoint = load_checkpoint(task)
+    if checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_accuracy = checkpoint['best_accuracy']
+        train_history = checkpoint['train_history']
+        val_history = checkpoint['val_history']
+        print(f"🔄 Continuăm de la epoca {start_epoch}/{EPOCHS}")
     save_path = os.path.join("models", f"{task}_best_model.bin")
     os.makedirs("models", exist_ok=True)
 
-    for epoch in range(EPOCHS):
+    for epoch in range(start_epoch,EPOCHS):
         print(f"\nEpoch {epoch + 1}/{EPOCHS}")
         print('-' * 20)
 
@@ -142,18 +195,59 @@ def run_training(task):
             model, train_loader, loss_fn, optimizer, DEVICE, scheduler, len(train_data)
         )
         print(f"Train | Loss: {train_loss:.4f} | Acc: {train_acc:.4f}")
+        # Salvăm istoricul
+        train_history['loss'].append(float(train_loss))
+        train_history['accuracy'].append(float(train_acc))
 
         val_acc, val_loss = eval_model(
             model, val_loader, loss_fn, DEVICE, len(val_data)
         )
         print(f"Val   | Loss: {val_loss:.4f} | Acc: {val_acc:.4f}")
-
+        # Salvăm istoricul
+        val_history['loss'].append(float(val_loss))
+        val_history['accuracy'].append(float(val_acc))
+        metrics_for_checkpoint = {
+            'train_history': train_history,
+            'val_history': val_history
+        }
         if val_acc > best_accuracy:
             torch.save(model.state_dict(), save_path)
             best_accuracy = val_acc
             print(f" >> Model Nou Salvat! ({save_path})")
-
+            
+           
+        save_checkpoint(epoch, model, optimizer, scheduler, metrics_for_checkpoint, task, best_accuracy)
+    # 6. Salvare metrici finale
+    print("\n📊 Salvare metrici de antrenare...") 
+    class_names = ['Negativ', 'Pozitiv', 'Neutru'] if task == 'sentiment' else [f'Categorie_{i}' for i in range(num_classes)]
+    
+    metrics_dict = {
+        'train_history': train_history,
+        'val_history': val_history,
+        'final_metrics': {
+            'train_accuracy': float(train_history['accuracy'][-1]),
+            'val_accuracy': float(val_history['accuracy'][-1]),
+            'train_loss': float(train_history['loss'][-1]),
+            'val_loss': float(val_history['loss'][-1]),
+            'best_val_accuracy': float(best_accuracy)
+        },
+        'config': {
+            'num_classes': num_classes,
+            'epochs': EPOCHS,
+            'batch_size': BATCH_SIZE,
+            'learning_rate': LEARNING_RATE,
+            'class_names': class_names[:num_classes]
+        }
+    }
+    
+    # Salvăm metricile
+    logger = MetricsLogger()
+    run_id = logger.new_run_id()
+    metrics_dict["run_id"] = run_id
+    logger.save_metrics(task, metrics_dict, run_id=run_id)
+    print(f"Run salvat: {run_id}")
     print(f"\n Gata! Modelul final pentru {task} este salvat.")
+    print(f"📈 Metricile au fost salvate în 'metrics/{task}_metrics.json'")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

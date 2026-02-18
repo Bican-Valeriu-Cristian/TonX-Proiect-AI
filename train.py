@@ -17,9 +17,9 @@ from src.model import TaskClassifier
 from src.metrics_logger import MetricsLogger
 
 # --- CONFIGURĂRI ---
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 EPOCHS = 3
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 3e-5
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CHECKPOINT_DIR = "checkpoints"  # Folder pentru checkpoint-uri
 

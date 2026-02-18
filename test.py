@@ -1,175 +1,191 @@
 import os
 import argparse
-import numpy as np
 import torch
-import torch.nn as nn
+import numpy as np
 from torch.utils.data import DataLoader
-
-# Importăm AdamW din PyTorch
-from torch.optim import AdamW 
-from transformers import get_linear_schedule_with_warmup
-
 from datasets import load_from_disk
-from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score
+)
 
-# Importăm modelul definit în src/model.py
-from src.model import TaskClassifier 
+
+# Importăm arhitectura modelului
+from src.model import TaskClassifier
+from src.metrics_logger import MetricsLogger
 
 # --- CONFIGURĂRI ---
 BATCH_SIZE = 16
-EPOCHS = 3
-LEARNING_RATE = 2e-5
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ==============================================================================
-# 1. MODIFICARE MAJORĂ: FORȚARE GPU
-# ==============================================================================
-# Verificăm strict dacă există GPU. Dacă nu, oprim scriptul.
-if not torch.cuda.is_available():
-    raise SystemError("❌ EROARE CRITICĂ: Nu am detectat placă video NVIDIA (CUDA)! "
-                      "Scriptul se oprește pentru a nu rula pe CPU.")
-
-DEVICE = torch.device("cuda")
-print(f"✅ GPU Detectat: {torch.cuda.get_device_name(0)}")
-print(f"✅ Memorie VRAM disponibilă: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-# ==============================================================================
-
-def get_sklearn_class_weights(labels):
-    """
-    Calculează ponderile folosind Scikit-Learn.
-    Returnează tensorul direct pe GPU.
-    """
-    classes = np.unique(labels)
-    
-    # Calcul automat ("balanced" aplică formula inversă frecvenței)
-    weights = compute_class_weight(class_weight='balanced', classes=classes, y=labels)
-    
-    print(f"   Clase detectate: {classes}")
-    print(f"   Ponderi calculate (sklearn): {weights}")
-    
-    # Trimitem ponderile direct pe DEVICE (GPU)
-    return torch.tensor(weights, dtype=torch.float).to(DEVICE)
-
-def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler, n_examples):
-    model = model.train()
-    losses = []
-    correct_predictions = 0
-
-    for batch in data_loader:
-        # Mutăm datele pe GPU
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['label'].to(device)
-
-        # 1. Forward pass
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-        
-        # 2. Calcul predicții și eroare
-        _, preds = torch.max(outputs, dim=1)
-        loss = loss_fn(outputs, labels)
-
-        correct_predictions += torch.sum(preds == labels)
-        losses.append(loss.item())
-
-        # 3. Backward pass (Învățare)
-        loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-        scheduler.step()
-        optimizer.zero_grad()
-
-    return correct_predictions.double() / n_examples, np.mean(losses)
-
-def eval_model(model, data_loader, loss_fn, device, n_examples):
-    model = model.eval()
-    losses = []
-    correct_predictions = 0
-
-    with torch.no_grad():
-        for batch in data_loader:
-            # Mutăm datele pe GPU
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['label'].to(device)
-
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            _, preds = torch.max(outputs, dim=1)
-            loss = loss_fn(outputs, labels)
-
-            correct_predictions += torch.sum(preds == labels)
-            losses.append(loss.item())
-
-    return correct_predictions.double() / n_examples, np.mean(losses)
-
-def run_training(task):
+def run_testing(task):
     print(f"\n=======================================================")
-    print(f" PORNIRE ANTRENARE PE GPU | TASK: {task.upper()}")
+    print(f" PORNIRE TESTARE | TASK: {task.upper()}")
     print(f"=======================================================")
-    
-    # 1. Încărcare date
+
+    # 1. Încărcare Date Tokenizate
     data_path = os.path.join("data", "tokenized_datasets", task)
     if not os.path.exists(data_path):
-        print(f"EROARE: Nu găsesc datele în '{data_path}'. Rulează 'python main.py' mai întâi!")
+        print(f"EROARE: Nu găsesc datele în '{data_path}'.")
         return
 
     dataset_dict = load_from_disk(data_path)
-    train_data = dataset_dict['train']
-    val_data = dataset_dict['validation']
+    
+    if 'test' not in dataset_dict:
+        print("EROARE: Setul de date nu conține split-ul 'test'.")
+        return
+    
+    test_data = dataset_dict['test']
+    
+    # Calculăm numărul de clase ÎNAINTE de a seta formatul PyTorch ---
+    print(" INFO: Analiză clase...")
+    # Extragem etichetele ca o listă simplă sau array numpy
+    all_labels = np.array(test_data['label']) 
+    unique_classes = np.unique(all_labels)
+    num_classes = len(unique_classes)
+    
+    print(f" INFO: S-au detectat {num_classes} clase în setul de test.")
+    # -----------------------------------------------------------------------------
 
-    # Analiză clase
-    print(" INFO: Analiză distribuție clase...")
-    all_labels = np.array(train_data['label']) 
-    num_classes = len(set(all_labels))
-    print(f" INFO: S-au detectat {num_classes} clase unice.")
+    # 2. Setare format PyTorch (Acum putem converti datele în tensori)
+    test_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    test_loader = DataLoader(test_data, batch_size=BATCH_SIZE)
 
-    # Calcul Ponderi (pe GPU)
-    class_weights = get_sklearn_class_weights(all_labels)
-
-    # 2. Setare format PyTorch
-    train_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-    val_data.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-
-    # --- MODIFICARE 2: Optimizare DataLoader pentru GPU ---
-    # pin_memory=True ajută la transferul mai rapid RAM -> VRAM
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, pin_memory=True)
-
-    # 3. Configurare Model
+    # 3. Încărcare Model
     model = TaskClassifier(num_classes=num_classes)
     
-    # Mutăm modelul pe GPU
-    model = model.to(DEVICE)
+    model_path = os.path.join("models", f"{task}_best_model.bin")
+    
+    if not os.path.exists(model_path):
+        print(f"EROARE: Nu găsesc modelul salvat la '{model_path}'. Rulează 'train.py' întâi!")
+        return
+        
+    print(f" INFO: Încărcare model din {model_path}...")
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.to(DEVICE)
+    model.eval() # IMPORTANT: Modul de evaluare
 
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+    # 4. Bucla de Predicție
+    print(" INFO: Generare predicții...")
+    
+    predictions = []
+    true_labels = []
 
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
-    total_steps = len(train_loader) * EPOCHS
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+    with torch.no_grad():
+        for batch in test_loader:
+            input_ids = batch['input_ids'].to(DEVICE)
+            attention_mask = batch['attention_mask'].to(DEVICE)
+            labels = batch['label'].to(DEVICE)
 
-    # 4. Bucla de antrenare
-    best_accuracy = 0
-    save_path = os.path.join("models", f"{task}_best_model.bin")
-    os.makedirs("models", exist_ok=True)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            _, preds = torch.max(outputs, dim=1)
 
-    for epoch in range(EPOCHS):
-        print(f"\nEpoch {epoch + 1}/{EPOCHS}")
-        print('-' * 20)
+            predictions.extend(preds.cpu().numpy())
+            true_labels.extend(labels.cpu().numpy())
 
-        train_acc, train_loss = train_epoch(
-            model, train_loader, loss_fn, optimizer, DEVICE, scheduler, len(train_data)
-        )
-        print(f"Train | Loss: {train_loss:.4f} | Acc: {train_acc:.4f}")
+    # 5. Calcul Metrici
+    acc = accuracy_score(true_labels, predictions)
+    f1_macro = f1_score(true_labels, predictions, average='macro', zero_division=0)
+    precision_macro = precision_score(true_labels, predictions, average='macro', zero_division=0)
+    recall_macro = recall_score(true_labels, predictions, average='macro', zero_division=0)
+    
+    print(f"\n{'='*50}")
+    print(f"\nREZULTATE FINALE PENTRU {task.upper()}:")
+    print(f"Acuratețe (Accuracy): {acc:.4f}")
+    print("-" * 30)
+    print(f"F1-Score (Macro):     {f1_macro:.4f}")
+    print(f"Precision (Macro):    {precision_macro:.4f}")
+    print(f"Recall (Macro):       {recall_macro:.4f}")
+    print("-" * 50)
+    
+    # 6. Metrici per Clasă
+    # Numele claselor
+    if task == 'sentiment':
+        if num_classes == 2:
+            target_names = ['Negativ', 'Pozitiv']
+        elif num_classes == 3:
+            target_names = ['Negativ', 'Pozitiv', 'Neutru']
+        else:
+            target_names = [f'Clasa_{i}' for i in range(num_classes)]
+    else:
+        target_names = [f'Categorie_{i}' for i in range(num_classes)]
 
-        val_acc, val_loss = eval_model(
-            model, val_loader, loss_fn, DEVICE, len(val_data)
-        )
-        print(f"Val   | Loss: {val_loss:.4f} | Acc: {val_acc:.4f}")
+    # Classification Report (conține precision, recall, f1 per clasă)
+    report = classification_report(
+        true_labels, 
+        predictions, 
+        target_names=target_names, 
+        digits=4,
+        output_dict=True  # Returnează dict pentru a salva în JSON
+    )
+    
+    print("\nRAPORT DETALIAT PER CLASĂ:")
+    print(classification_report(
+        true_labels, 
+        predictions, 
+        target_names=target_names, 
+        digits=4
+    ))
+    
+    # 7. Matrice de Confuzie
+    conf_matrix = confusion_matrix(true_labels, predictions)
+    print("-" * 50)
+    print("Matrice de Confuzie (Rânduri=Real, Coloane=Predis):")
+    print(conf_matrix)
+    print("-" * 50)
 
-        if val_acc > best_accuracy:
-            torch.save(model.state_dict(), save_path)
-            best_accuracy = val_acc
-            print(f" >> Model Nou Salvat! ({save_path})")
+    # 8. Pregătire date pentru salvare
+    # Extragem metricile per clasă din report
+    class_metrics = {}
+    for class_name in target_names:
+        if class_name in report:
+            class_metrics[class_name] = {
+                'precision': report[class_name]['precision'],
+                'recall': report[class_name]['recall'],
+                'f1-score': report[class_name]['f1-score'],
+                'support': int(report[class_name]['support'])
+            }
+    
+    # 9. Încărcăm metricile existente din train.py
+    logger = MetricsLogger()
+    existing_metrics = logger.load_metrics(task)
+    run_id = None
+    if existing_metrics and "run_id" in existing_metrics:
+      run_id = existing_metrics["run_id"]
 
-    print(f"\n Gata! Modelul final pentru {task} este salvat.")
+    if existing_metrics is None:
+        print("⚠ ATENȚIE: Nu există metrici de antrenare. Se vor salva doar metricile de test.")
+        existing_metrics = {}
+    
+    # 10. Adăugăm metricile de test la cele existente
+    existing_metrics['test_results'] = {
+        'accuracy': float(acc),
+        'f1_score_macro': float(f1_macro),
+        'precision_macro': float(precision_macro),
+        'recall_macro': float(recall_macro),
+        'confusion_matrix': conf_matrix.tolist(),  # Convertim la listă pentru JSON
+        'num_test_samples': len(true_labels)
+    }
+    
+    existing_metrics['class_metrics'] = class_metrics
+    
+    # Actualizăm și numele claselor în config (dacă există)
+    if 'config' not in existing_metrics:
+        existing_metrics['config'] = {}
+    existing_metrics['config']['class_names'] = target_names
+    
+    # 11. Salvăm metricile actualizate
+    print(f"\n📊 Salvare metrici complete (train + test)...")
+    logger.save_metrics(task, existing_metrics, run_id=run_id)
+    
+    print(f"\n{'='*50}")
+    print("✅ TESTARE FINALIZATĂ CU SUCCES!")
+    print(f"📈 Toate metricile au fost salvate în 'metrics/{task}_metrics.json'")
+    print(f"{'='*50}\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -179,4 +195,4 @@ if __name__ == "__main__":
     if args.task not in ['sentiment', 'category']:
         print("Eroare: Task-ul trebuie să fie 'sentiment' sau 'category'.")
     else:
-        run_training(args.task)
+        run_testing(args.task)

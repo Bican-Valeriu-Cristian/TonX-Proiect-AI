@@ -55,7 +55,7 @@ def main():
 
     # Ajustează label-urile dacă la tine ordinea e alta
     if choice in ["1", "3"]:
-        sentiment_labels = ["Negativ", "Neutru", "Pozitiv"]
+        sentiment_labels = ["Negativ", "Pozitiv", "Neutru"]
         models["sentiment"] = {
             "model": load_model("sentiment", num_classes=len(sentiment_labels)),
             "labels": sentiment_labels,
@@ -63,7 +63,7 @@ def main():
 
     if choice in ["2", "3"]:
         # IMPORTANT: aici trebuie să pui exact numărul și numele claselor tale
-        category_labels = ["Suport", "Ofertă", "Cerere", "Reclamație", "Follow-up"]
+        category_labels =["forum", "promotions", "social_media", "spam", "updates", "verify_code"]
         models["category"] = {
             "model": load_model("category", num_classes=len(category_labels)),
             "labels": category_labels,

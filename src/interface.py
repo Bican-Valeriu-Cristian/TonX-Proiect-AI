@@ -40,7 +40,7 @@ with st.sidebar:
         st.subheader("⚙️ Configurare Model")
         selected_task = st.selectbox(
             "Alege Modelul Activ:", 
-            ["sentiment", "category"],
+            ["sentiment", "category","Sentiment & Category"],
             format_func=lambda x: x.capitalize()
         )
         st.info(f"Model selectat: **{selected_task.capitalize()}**")
@@ -52,14 +52,18 @@ with st.sidebar:
 if menu == "Analiză Mesaj":
     st.title(f"Analiză: {selected_task.capitalize()}")
     st.markdown("Introduceți textul mesajului mai jos pentru a fi procesat de modelul AI.")
-
+    tasks_to_run = ["sentiment", "category"] if selected_task == "Sentiment & Category" else [selected_task]
     # Încărcăm modelul selectat
-    predictor = load_predictor(selected_task)
+    predictors = {t: load_predictor(t) for t in tasks_to_run}
 
     # Verificăm dacă modelul este gata
-    if not predictor.ready:
-        st.error(f"⚠️ Modelul '{selected_task}' nu a fost găsit sau nu este antrenat.")
-        st.warning(f"Te rugăm să rulezi `python train.py --task {selected_task}` mai întâi.")
+    all_ready = all(p.ready for p in predictors.values())
+
+    if not all_ready:
+        for t, p in predictors.items():
+            if not p.ready:
+                st.error(f"⚠️ Modelul '{t}' nu a fost găsit sau nu este antrenat.")
+        st.warning("Te rugăm să rulezi antrenarea pentru modelele lipsă.")
     else:
         col1, col2 = st.columns([2, 1])
 
@@ -68,39 +72,45 @@ if menu == "Analiză Mesaj":
             analyze_btn = st.button("🔍 Analizează Mesajul", type="primary")
 
         if analyze_btn and user_input:
+            results = {}
             with st.spinner('Procesare text cu DistilBERT...'):
-                # Apelăm predicția reală
-                start_time = time.time()
-                label, score, class_idx = predictor.predict(user_input)
-                duration = time.time() - start_time
+                for t_name, p_obj in predictors.items():
+                    start_time = time.time()
+                    label, score, class_idx = p_obj.predict(user_input)
+                    results[t_name] = {
+                        "label": label, 
+                        "score": score, 
+                        "duration": time.time() - start_time, 
+                        "idx": class_idx
+                    }
             
             st.divider()
             st.subheader("Rezultate Analiză")
             
-            # Determinăm culoarea în funcție de scor sau label (doar estetic)
-            color_delta = "off"
-            if score > 0.8: color_delta = "normal"
-            if score < 0.5: color_delta = "inverse"
+           # 4. Afișare Dinamică
+            display_cols = st.columns(len(tasks_to_run))
+            
+            for i, t_name in enumerate(tasks_to_run):
+                with display_cols[i]:
+                    res = results[t_name]
+                    st.markdown(f"### Model: **{t_name.capitalize()}**")
+                    
+                    color_delta = "off"
+                    if res["score"] > 0.8: color_delta = "normal"
+                    if res["score"] < 0.5: color_delta = "inverse"
 
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.metric(label="Clasă Predicție", value=label)
-            with m2:
-                st.metric(label="Încredere (Confidence)", value=f"{score*100:.2f}%", delta=color_delta)
-            with m3:
-                st.metric(label="Timp Procesare", value=f"{duration:.4f} sec")
-                
-            st.caption(f"Index intern clasă: {class_idx}")
-            
-            # Progress bar colorat (custom hack sau standard)
-            st.progress(score, text="Nivel de certitudine al modelului")
-            
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Clasă", res["label"])
+                    m2.metric("Încredere", f"{res['score']*100:.2f}%", delta=color_delta)
+                    m3.metric("Timp", f"{res['duration']:.4f}s")
+                    
+                    st.progress(res["score"], text=f"Certitudine {t_name}")
+                    st.caption(f"Index intern: {res['idx']}")
             # Afișăm JSON raw pentru debug/integrare API
             with st.expander("Vezi răspuns JSON (API format)"):
                 st.json({
                     "text": user_input,
-                    "prediction": label,
-                    "confidence": score,
+                    "results": results,
                     "model": selected_task,
                     "timestamp": time.time()
                 })
@@ -111,10 +121,7 @@ elif menu == "Performanță Model":
     st.markdown("Evaluarea completă a modelului pe seturile de validare și test.")
 
     logger = MetricsLogger()
-    
-    # Selector pentru task în pagina de performanță
     task_choice = st.selectbox("Selectează Task-ul de vizualizat", ["sentiment", "category"])
-    
     runs = logger.list_runs(task_choice)
     
     if not runs:
@@ -124,56 +131,45 @@ elif menu == "Performanță Model":
         metrics = logger.load_metrics(task_choice, None if run_id == "latest" else run_id)
 
         if metrics:
-            # Extragem datele
             final_metrics = metrics.get('final_metrics', {})
-            test_results = metrics.get('test_results', None)
-            train_history = metrics.get('train_history', {})
-            val_history = metrics.get('val_history', {})
-            class_metrics = metrics.get('class_metrics', {})
+            test_results = metrics.get('test_results', {})
             config = metrics.get('config', {})
             
-            # 1. KPI-uri principale
-            st.subheader("📈 Metrici Globale")
+            # --- 1. KPI-uri principale (Layout pe două rânduri pentru claritate) ---
+            st.subheader("📈 Metrici de Test (General)")
+            
+            # Rândul 1: Cele mai importante metrici
             c1, c2, c3, c4 = st.columns(4)
             
-            acc = 0
-            if test_results:
-                acc = test_results.get('accuracy', 0)
-                f1 = test_results.get('f1_score_macro', 0)
-            else:
-                acc = final_metrics.get('val_accuracy', 0)
-                f1 = 0
+            # Extragem valorile cu fallback la final_metrics dacă test_results lipsește
+            acc = test_results.get('accuracy', final_metrics.get('val_accuracy', 0))
+            f1_macro = test_results.get('f1_score_macro', 0)
+            prec_macro = test_results.get('precision_macro', 0)
+            rec_macro = test_results.get('recall_macro', 0)
 
             c1.metric("Acuratețe", f"{acc*100:.2f}%")
-            c2.metric("Loss (Validare)", f"{final_metrics.get('val_loss', 0):.4f}")
-            c3.metric("F1 Score", f"{f1:.4f}")
-            c4.metric("Epoci", config.get('epochs', '-'))
+            c2.metric("F1 Score (Macro)", f"{f1_macro:.4f}")
+            c3.metric("Precision (Macro)", f"{prec_macro:.4f}")
+            c4.metric("Recall (Macro)", f"{rec_macro:.4f}")
+
+            # Rândul 2: Detalii antrenare
+            st.markdown("#### Detalii Antrenare")
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Loss (Validation)", f"{final_metrics.get('val_loss', 0):.4f}")
+            d2.metric("Epoci Totale", config.get('epochs', '-'))
+            d3.metric("Batch Size", config.get('batch_size', '-'))
+            d4.metric("Learning Rate", config.get('learning_rate', '-'))
 
             st.divider()
 
-            # 2. Grafice
-            if train_history:
-                st.subheader("📊 Evoluție Antrenare")
-                tab1, tab2 = st.tabs(["Acuratețe", "Loss"])
-                
-                epochs_range = range(1, len(train_history['accuracy']) + 1)
-                df_acc = pd.DataFrame({
-                    "Epoch": list(epochs_range),
-                    "Train": train_history['accuracy'],
-                    "Validation": val_history['accuracy']
-                }).set_index("Epoch")
-                
-                df_loss = pd.DataFrame({
-                    "Epoch": list(epochs_range),
-                    "Train": train_history['loss'],
-                    "Validation": val_history['loss']
-                }).set_index("Epoch")
-
-                with tab1:
-                    st.line_chart(df_acc, color=["#36a2eb", "#ff6384"])
-                with tab2:
-                    st.line_chart(df_loss, color=["#36a2eb", "#ff6384"])
-
+            # --- 2. Tabel Detaliat per Clasă ---
+            st.subheader("📋 Detalii per Clasă")
+            class_metrics = metrics.get('class_metrics', {})
+            if class_metrics:
+                # Transformăm dicționarul într-un DataFrame pentru afișare frumoasă
+                df_metrics = pd.DataFrame(class_metrics).transpose()
+                # Excludem rândurile de suport/total dacă nu sunt necesare
+                st.table(df_metrics.style.format("{:.4f}").background_gradient(cmap='Greens', subset=['f1-score', 'precision', 'recall']))
             # 3. Matrice de confuzie și Clase
             if test_results and 'confusion_matrix' in test_results:
                 st.divider()

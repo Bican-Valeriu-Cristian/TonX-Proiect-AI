@@ -166,7 +166,7 @@ elif menu == "Performanță Model":
             st.subheader("📋 Detalii per Clasă")
             class_metrics = metrics.get('class_metrics', {})
             if class_metrics:
-                # Transformăm dicționarul într-un DataFrame pentru afișare frumoasă
+                # Transformăm dicționarul într-un DataFrame pentru afișare
                 df_metrics = pd.DataFrame(class_metrics).transpose()
                 # Excludem rândurile de suport/total dacă nu sunt necesare
                 st.table(df_metrics.style.format("{:.4f}").background_gradient(cmap='Greens', subset=['f1-score', 'precision', 'recall']))

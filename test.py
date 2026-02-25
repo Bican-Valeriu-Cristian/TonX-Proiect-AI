@@ -112,8 +112,15 @@ def run_testing(task):
         else:
             target_names = [f'Clasa_{i}' for i in range(num_classes)]
     else:
-        target_names = [f'Categorie_{i}' for i in range(num_classes)]
-
+        target_names = [
+            "forum",           # ID 0
+            "promotions",      # ID 1
+            "social_media",    # ID 2
+            "spam",            # ID 3
+            "updates",         # ID 4
+            "verify_code"      # ID 5
+        ]
+        target_names = target_names[:num_classes]
     # Classification Report (conține precision, recall, f1 per clasă)
     report = classification_report(
         true_labels, 
@@ -128,7 +135,8 @@ def run_testing(task):
         true_labels, 
         predictions, 
         target_names=target_names, 
-        digits=4
+        digits=4,
+        output_dict=True
     ))
     
     # 7. Matrice de Confuzie

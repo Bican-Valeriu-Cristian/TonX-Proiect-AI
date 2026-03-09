@@ -18,11 +18,11 @@ st.set_page_config(
 
 # --- FUNCȚII CACHED (Pentru performanță) ---
 @st.cache_resource
-def load_predictor(task_name):
+def load_predictor(task_name, is_raw=False):
     """
     Încarcă modelul în cache pentru a nu-l reîncărca la fiecare interacțiune.
     """
-    return TonXPredictor(task_name)
+    return TonXPredictor(task_name, is_raw=is_raw)
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -43,7 +43,11 @@ with st.sidebar:
             ["sentiment", "category","Sentiment & Category"],
             format_func=lambda x: x.capitalize()
         )
-        st.info(f"Model selectat: **{selected_task.capitalize()}**")
+        compare_raw = st.checkbox("Folosește modelul RAW (neantrenat)")
+        if compare_raw:
+            st.info("Se va afișa o comparație **Antrenat vs RAW** pentru fiecare task.")
+        else:
+            st.info(f"Model selectat: **{selected_task.capitalize()}**")
 
     st.markdown("---")
     st.caption("TonX Team v1.0")
@@ -55,7 +59,9 @@ if menu == "Analiză Mesaj":
     tasks_to_run = ["sentiment", "category"] if selected_task == "Sentiment & Category" else [selected_task]
     # Încărcăm modelul selectat
     predictors = {t: load_predictor(t) for t in tasks_to_run}
-
+    raw_predictors = {}
+    if compare_raw:
+        raw_predictors = {t: load_predictor(t, is_raw=True) for t in tasks_to_run}
     # Verificăm dacă modelul este gata
     all_ready = all(p.ready for p in predictors.values())
 
@@ -70,9 +76,9 @@ if menu == "Analiză Mesaj":
         with col1:
             user_input = st.text_area("Mesaj de analizat", height=150, placeholder="Scrie aici mesajul...")
             analyze_btn = st.button("🔍 Analizează Mesajul", type="primary")
-
+        results = {}
+        raw_results = {}
         if analyze_btn and user_input:
-            results = {}
             with st.spinner('Procesare text cu DistilBERT...'):
                 for t_name, p_obj in predictors.items():
                     start_time = time.time()
@@ -83,34 +89,68 @@ if menu == "Analiză Mesaj":
                         "duration": time.time() - start_time, 
                         "idx": class_idx
                     }
-            
+                if compare_raw:
+                    for t_name, p_obj in raw_predictors.items():
+                        start = time.time()
+                        label, score, class_idx = p_obj.predict(user_input)
+                        raw_results[t_name] = {
+                            "label": label,
+                            "score": score,
+                            "duration": time.time() - start,
+                            "idx": class_idx
+                        }
+
             st.divider()
             st.subheader("Rezultate Analiză")
             
-           # 4. Afișare Dinamică
-            display_cols = st.columns(len(tasks_to_run))
-            
-            for i, t_name in enumerate(tasks_to_run):
-                with display_cols[i]:
+            for t_name in tasks_to_run:
+                if compare_raw:
+                    st.markdown(f"### 📊 Task: **{t_name.capitalize()}**")
+                    col_trained, col_raw = st.columns(2)
+
+                    with col_trained:
+                        res = results[t_name]
+                        st.markdown("#### ✅ Model Antrenat")
+                        color_delta = "off"
+                        if res["score"] > 0.8: color_delta = "normal"
+                        if res["score"] < 0.5: color_delta = "inverse"
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Clasă", res["label"])
+                        m2.metric("Încredere", f"{res['score']*100:.2f}%", delta=color_delta)
+                        m3.metric("Timp", f"{res['duration']:.4f}s")
+                        st.progress(res["score"], text="Certitudine (antrenat)")
+
+                    with col_raw:
+                        res_raw = raw_results.get(t_name, {})
+                        st.markdown("#### 🔬 Model RAW (neantrenat)")
+                        color_delta = "off"
+                        if res_raw.get("score", 0) > 0.8: color_delta = "normal"
+                        if res_raw.get("score", 0) < 0.5: color_delta = "inverse"
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Clasă", res_raw.get("label", "-"))
+                        m2.metric("Încredere", f"{res_raw.get('score', 0)*100:.2f}%", delta=color_delta)
+                        m3.metric("Timp", f"{res_raw.get('duration', 0):.4f}s")
+                        st.progress(res_raw.get("score", 0), text="Certitudine (RAW)")
+                    
+                    st.divider()
+                else:
                     res = results[t_name]
                     st.markdown(f"### Model: **{t_name.capitalize()}**")
-                    
                     color_delta = "off"
                     if res["score"] > 0.8: color_delta = "normal"
                     if res["score"] < 0.5: color_delta = "inverse"
-
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Clasă", res["label"])
                     m2.metric("Încredere", f"{res['score']*100:.2f}%", delta=color_delta)
                     m3.metric("Timp", f"{res['duration']:.4f}s")
-                    
                     st.progress(res["score"], text=f"Certitudine {t_name}")
                     st.caption(f"Index intern: {res['idx']}")
-            # Afișăm JSON raw pentru debug/integrare API
+
             with st.expander("Vezi răspuns JSON (API format)"):
                 st.json({
                     "text": user_input,
                     "results": results,
+                    "raw_results": raw_results if compare_raw else "N/A",
                     "model": selected_task,
                     "timestamp": time.time()
                 })

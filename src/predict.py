@@ -10,12 +10,13 @@ from src.preprocessing import simple_clean
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class TonXPredictor:
-    def __init__(self, task):
+    def __init__(self, task, is_raw=False):
         """
         Inițializează predictorul pentru un anumit task ('sentiment' sau 'category').
         Încarcă modelul antrenat și configurația claselor.
         """
         self.task = task
+        self.is_raw = is_raw
         self.model = None
         self.tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
         self.class_names = []
@@ -69,18 +70,21 @@ class TonXPredictor:
         print(f"🔄 Încărcare model {self.task} ({num_classes} clase)...")
         try:
             # Inițializăm arhitectura cu numărul corect de clase
-            self.model = TaskClassifier(num_classes=num_classes)
-            
-            if os.path.exists(self.model_path):
-                # Încărcăm greutățile cu strict=False pentru a fi mai permisivi, dar acum dimensiunile sunt corecte
-                self.model.load_state_dict(torch.load(self.model_path, map_location=DEVICE))
-                self.model.to(DEVICE)
-                self.model.eval() # Mod evaluare (fără dropout)
-                self.ready = True
-                print(f"✅ Model {self.task} încărcat cu succes!")
+            self.model = TaskClassifier(num_classes=num_classes).to(DEVICE)
+            if not self.is_raw: 
+                if os.path.exists(self.model_path):
+                    # Încărcăm greutățile cu strict=False pentru a fi mai permisivi, dar acum dimensiunile sunt corecte
+                    self.model.load_state_dict(torch.load(self.model_path, map_location=DEVICE))
+                    print(f"✅ Model {self.task} încărcat cu succes!")
+                    self.ready = True
+                else:
+                    print(f"❌ Eroare: Nu s-a găsit fișierul modelului la {self.model_path}")
+                    self.ready = False
             else:
-                print(f"❌ Eroare: Nu s-a găsit fișierul modelului la {self.model_path}")
-                
+                    print(f"ℹ️ Modelul {self.task} este în stare RAW (neantrenat).")
+                    self.ready = True
+            self.model.eval()
+        
         except RuntimeError as e:
             if "size mismatch" in str(e):
                 print(f"❌ EROARE DIMENSIUNI: Codul așteaptă {num_classes} clase, dar modelul salvat are alt număr.")
